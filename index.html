@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f6feb" />
+  <title>基礎型枠 割付計算</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="基礎型枠" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="appbar">
+    <h1>基礎型枠 割付計算</h1>
+    <span class="ver">v1.0</span>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="project">図面・寸法</button>
+    <button class="tab" data-tab="inventory">型枠在庫</button>
+    <button class="tab" data-tab="result">計算結果</button>
+  </nav>
+
+  <main>
+    <!-- ===== 図面・寸法 ===== -->
+    <section id="tab-project" class="panel active">
+      <div class="card">
+        <div class="row">
+          <label>現場名</label>
+          <input id="projName" type="text" placeholder="例: 〇〇様邸 基礎" />
+        </div>
+        <div class="row two">
+          <div>
+            <label>基礎幅(mm)</label>
+            <input id="thickness" type="number" inputmode="numeric" value="150" />
+            <small>内側の面はこの幅×2だけ短く計算します</small>
+          </div>
+          <div>
+            <label>両面で計算</label>
+            <select id="bothFaces">
+              <option value="1" selected>両面(内+外)</option>
+              <option value="0">片面のみ</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>各辺の長さ</h2>
+          <span class="hint">図面を見ながら入力</span>
+        </div>
+
+        <div class="quick">
+          <details>
+            <summary>長方形を一括入力</summary>
+            <div class="row two">
+              <div><label>横 W(mm)</label><input id="rectW" type="number" inputmode="numeric" placeholder="9100" /></div>
+              <div><label>縦 D(mm)</label><input id="rectD" type="number" inputmode="numeric" placeholder="7280" /></div>
+            </div>
+            <button class="btn" id="addRect">長方形(4辺)を追加</button>
+          </details>
+        </div>
+
+        <div id="edgeList" class="edge-list"></div>
+
+        <div class="row two">
+          <input id="edgeLen" type="number" inputmode="numeric" placeholder="辺の長さ mm" />
+          <button class="btn" id="addEdge">辺を追加</button>
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="closed" checked />
+          外周として閉じる（角の数＝辺の数）
+        </label>
+        <p class="totals" id="edgeTotals"></p>
+      </div>
+
+      <button class="btn primary big" id="calcBtn">割付を計算する</button>
+    </section>
+
+    <!-- ===== 型枠在庫 ===== -->
+    <section id="tab-inventory" class="panel">
+      <div class="card">
+        <div class="card-head">
+          <h2>所有している型枠を登録</h2>
+        </div>
+        <p class="hint">サイズ（横幅mm）と所有枚数を登録します。大きい順に使われ、在庫数で過不足を判定します。</p>
+
+        <div class="seg" id="typeSeg">
+          <button class="seg-btn active" data-type="straight">直線枠</button>
+          <button class="seg-btn" data-type="corner">コーナー枠</button>
+          <button class="seg-btn" data-type="adjust">調整枠</button>
+        </div>
+
+        <div id="invForm" class="inv-form"></div>
+        <button class="btn" id="addInv">在庫に追加</button>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>登録済み在庫</h2></div>
+        <div id="invList" class="inv-list"></div>
+      </div>
+    </section>
+
+    <!-- ===== 計算結果 ===== -->
+    <section id="tab-result" class="panel">
+      <div id="resultArea"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast"></div>
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
