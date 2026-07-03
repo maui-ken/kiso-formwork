@@ -1,9 +1,10 @@
 /* 基礎型枠 PWA  Service Worker — オフライン対応 */
-const CACHE = "kiso-formwork-v1";
+const CACHE = "kiso-formwork-v3";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
+  "./engine.js",
   "./app.js",
   "./manifest.webmanifest",
   "./icon.svg",
@@ -27,6 +28,11 @@ self.addEventListener("fetch", e => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
       return res;
-    }).catch(() => caches.match("./index.html")))
+    }).catch(() => {
+      // オフライン時のフォールバックは「ページ遷移」だけ index.html を返す。
+      // CSS/JS などへ index.html を返すとスタイルが壊れる（＝辞書のような無地表示）ため返さない。
+      if (e.request.mode === "navigate") return caches.match("./index.html");
+      return Response.error();
+    }))
   );
 });

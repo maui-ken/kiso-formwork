@@ -14,12 +14,12 @@
 <body>
   <header class="appbar">
     <h1>基礎型枠 割付計算</h1>
-    <span class="ver">v1.0</span>
+    <span class="ver">v2.0</span>
   </header>
 
   <nav class="tabs">
     <button class="tab active" data-tab="project">図面・寸法</button>
-    <button class="tab" data-tab="inventory">型枠在庫</button>
+    <button class="tab" data-tab="inventory">在庫</button>
     <button class="tab" data-tab="result">計算結果</button>
   </nav>
 
@@ -35,7 +35,7 @@
           <div>
             <label>基礎幅(mm)</label>
             <input id="thickness" type="number" inputmode="numeric" value="150" />
-            <small>内側の面はこの幅×2だけ短く計算します</small>
+            <small>内側の面は出隅で−幅・入隅で＋幅で計算</small>
           </div>
           <div>
             <label>両面で計算</label>
@@ -45,13 +45,22 @@
             </select>
           </div>
         </div>
+        <div class="row two">
+          <div>
+            <label>単管の段数</label>
+            <input id="pipeRows" type="number" inputmode="numeric" value="1" min="0" />
+            <small>型枠に水平に流す段数（0で計算しない）</small>
+          </div>
+          <div></div>
+        </div>
       </div>
 
       <div class="card">
         <div class="card-head">
-          <h2>各辺の長さ</h2>
+          <h2>各辺の長さ と 角</h2>
           <span class="hint">図面を見ながら入力</span>
         </div>
+        <p class="hint">時計回りに1辺ずつ入力。「出/入」ボタンでその辺の<b>次の角</b>が出隅か入隅かを切り替えます（L字・コの字対応）。</p>
 
         <div class="quick">
           <details>
@@ -76,6 +85,7 @@
           外周として閉じる（角の数＝辺の数）
         </label>
         <p class="totals" id="edgeTotals"></p>
+        <div id="shapePreview" class="shape-preview" style="display:none"></div>
       </div>
 
       <button class="btn primary big" id="calcBtn">割付を計算する</button>
@@ -85,14 +95,16 @@
     <section id="tab-inventory" class="panel">
       <div class="card">
         <div class="card-head">
-          <h2>所有している型枠を登録</h2>
+          <h2>所有している型枠・単管を登録</h2>
         </div>
-        <p class="hint">サイズ（横幅mm）と所有枚数を登録します。大きい順に使われ、在庫数で過不足を判定します。</p>
+        <p class="hint">サイズと所有数を登録します。パネルは大きい順に使われ、在庫数で過不足を判定します。</p>
 
-        <div class="seg" id="typeSeg">
-          <button class="seg-btn active" data-type="straight">直線枠</button>
-          <button class="seg-btn" data-type="corner">コーナー枠</button>
-          <button class="seg-btn" data-type="adjust">調整枠</button>
+        <div class="seg wrap" id="typeSeg">
+          <button class="seg-btn active" data-type="straight">ヒラパネル</button>
+          <button class="seg-btn" data-type="corner">出隅コーナー</button>
+          <button class="seg-btn" data-type="cornerIn">入隅コーナー</button>
+          <button class="seg-btn" data-type="adjust">スライド</button>
+          <button class="seg-btn" data-type="pipe">単管</button>
         </div>
 
         <div id="invForm" class="inv-form"></div>
