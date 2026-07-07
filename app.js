@@ -6,40 +6,80 @@
 /* 計算エンジンは engine.js（calculate / polygonPoints / TOLERANCE）に分離 */
 
 /* ---------- 状態 ---------- */
-const defaultState = () => ({
-  project: { name: "", thickness: 150, bothFaces: 1, closed: true, pipeRows: 1, edges: [] },
-  inventory: [
-    // 初期サンプル（編集・削除可）
-    { id: uid(), type: "straight", width: 1800, qty: 20 },
-    { id: uid(), type: "straight", width: 900,  qty: 20 },
-    { id: uid(), type: "straight", width: 600,  qty: 20 },
-    { id: uid(), type: "straight", width: 300,  qty: 20 },
-    { id: uid(), type: "corner",   legA: 150, legB: 150, qty: 8 },
-    { id: uid(), type: "cornerIn", legA: 150, legB: 150, qty: 8 },
-    { id: uid(), type: "adjust",   minW: 0, maxW: 300, cuttable: true, qty: 0 },
-    { id: uid(), type: "pipe",     length: 4000, qty: 10 },
-    { id: uid(), type: "pipe",     length: 2000, qty: 10 },
-  ],
-});
+function uid() { return Math.random().toString(36).slice(2, 9); }
+
+function newSite(name) {
+  return { id: uid(), name: name || "", thickness: 150, bothFaces: 1, closed: true, pipeRows: 1, edges: [] };
+}
+
+const defaultState = () => {
+  const s = newSite("現場1");
+  return {
+    sites: [s],
+    currentSiteId: s.id,
+    inventory: [
+      // 初期サンプル（編集・削除可）
+      { id: uid(), type: "straight", width: 1800, qty: 20 },
+      { id: uid(), type: "straight", width: 900,  qty: 20 },
+      { id: uid(), type: "straight", width: 600,  qty: 20 },
+      { id: uid(), type: "straight", width: 300,  qty: 20 },
+      { id: uid(), type: "corner",   legA: 150, legB: 150, qty: 8 },
+      { id: uid(), type: "cornerIn", legA: 150, legB: 150, qty: 8 },
+      { id: uid(), type: "adjust",   minW: 0, maxW: 300, cuttable: true, qty: 0 },
+      { id: uid(), type: "pipe",     length: 4000, qty: 10 },
+      { id: uid(), type: "pipe",     length: 2000, qty: 10 },
+    ],
+  };
+};
 
 let state = load();
 
-function uid() { return Math.random().toString(36).slice(2, 9); }
-function save() { localStorage.setItem("kiso-formwork", JSON.stringify(state)); }
+/* 現在編集中の現場（無ければ生成・修復） */
+function curSite() {
+  if (!state.sites || !state.sites.length) {
+    const s = newSite("現場1"); state.sites = [s]; state.currentSiteId = s.id;
+  }
+  let s = state.sites.find(x => x.id === state.currentSiteId);
+  if (!s) { s = state.sites[0]; state.currentSiteId = s.id; }
+  return s;
+}
+
+/* 現場データの正規化（移行・防御） */
+function normalizeSite(p) {
+  if (!p.id) p.id = uid();
+  if (p.pipeRows == null) p.pipeRows = 1;
+  if (!Array.isArray(p.edges)) p.edges = [];
+  p.edges.forEach(e => { if (e.corner !== "in" && e.corner !== "out") e.corner = "out"; });
+  return p;
+}
+function normalizeInventory(inv) {
+  (inv || []).forEach(i => {
+    if (i.type === "corner" || i.type === "cornerIn") {
+      if (i.legA == null) i.legA = i.leg || 0;
+      if (i.legB == null) i.legB = i.legA;
+    }
+  });
+  return inv || [];
+}
+
+function save() {
+  localStorage.setItem("kiso-formwork", JSON.stringify(state));
+  if (window.Sync && Sync.connected) Sync.push({ inventory: state.inventory, sites: state.sites });
+}
+
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem("kiso-formwork"));
-    if (s && s.project && s.inventory) {
-      // v1 → v2 移行
-      if (s.project.pipeRows == null) s.project.pipeRows = 1;
-      s.project.edges.forEach(e => { if (e.corner !== "in" && e.corner !== "out") e.corner = "out"; });
-      // コーナー枠の旧データ {leg} → {legA, legB}
-      s.inventory.forEach(i => {
-        if (i.type === "corner" || i.type === "cornerIn") {
-          if (i.legA == null) i.legA = i.leg || 0;
-          if (i.legB == null) i.legB = i.legA;
-        }
-      });
+    if (s && s.inventory) {
+      normalizeInventory(s.inventory);
+      // v2（単一project） → v3（複数sites）移行
+      if (!s.sites && s.project) {
+        const p = normalizeSite(s.project);
+        s.sites = [p]; s.currentSiteId = p.id; delete s.project;
+      }
+      if (!s.sites || !s.sites.length) { const p = newSite("現場1"); s.sites = [p]; s.currentSiteId = p.id; }
+      s.sites.forEach(normalizeSite);
+      if (!s.currentSiteId || !s.sites.find(x => x.id === s.currentSiteId)) s.currentSiteId = s.sites[0].id;
       return s;
     }
   } catch (e) {}
@@ -64,26 +104,27 @@ $$(".tab").forEach(btn => btn.addEventListener("click", () => {
   btn.classList.add("active");
   $("#tab-" + btn.dataset.tab).classList.add("active");
   if (btn.dataset.tab === "result") renderResult();
+  if (btn.dataset.tab === "sync") renderSyncTab();
 }));
 
 /* ---- プロジェクト入力 ---- */
 function bindProject() {
-  $("#projName").value = state.project.name;
-  $("#thickness").value = state.project.thickness;
-  $("#bothFaces").value = state.project.bothFaces;
-  $("#pipeRows").value = state.project.pipeRows;
-  $("#closed").checked = state.project.closed;
+  $("#projName").value = curSite().name;
+  $("#thickness").value = curSite().thickness;
+  $("#bothFaces").value = curSite().bothFaces;
+  $("#pipeRows").value = curSite().pipeRows;
+  $("#closed").checked = curSite().closed;
 
-  $("#projName").oninput = e => { state.project.name = e.target.value; save(); };
-  $("#thickness").oninput = e => { state.project.thickness = +e.target.value || 0; save(); };
-  $("#bothFaces").onchange = e => { state.project.bothFaces = +e.target.value; save(); };
-  $("#pipeRows").oninput = e => { state.project.pipeRows = Math.max(0, +e.target.value || 0); save(); };
-  $("#closed").onchange = e => { state.project.closed = e.target.checked; save(); renderEdges(); };
+  $("#projName").oninput = e => { curSite().name = e.target.value; save(); renderSiteBar(); };
+  $("#thickness").oninput = e => { curSite().thickness = +e.target.value || 0; save(); };
+  $("#bothFaces").onchange = e => { curSite().bothFaces = +e.target.value; save(); };
+  $("#pipeRows").oninput = e => { curSite().pipeRows = Math.max(0, +e.target.value || 0); save(); };
+  $("#closed").onchange = e => { curSite().closed = e.target.checked; save(); renderEdges(); };
 
   $("#addEdge").onclick = () => {
     const v = +$("#edgeLen").value;
     if (!v || v <= 0) return toast("辺の長さを入力してください");
-    state.project.edges.push({ id: uid(), length: v, corner: "out" });
+    curSite().edges.push({ id: uid(), length: v, corner: "out" });
     $("#edgeLen").value = ""; save(); renderEdges();
   };
   $("#edgeLen").addEventListener("keydown", e => { if (e.key === "Enter") $("#addEdge").click(); });
@@ -91,7 +132,7 @@ function bindProject() {
   $("#addRect").onclick = () => {
     const w = +$("#rectW").value, d = +$("#rectD").value;
     if (!w || !d) return toast("横・縦を入力してください");
-    [w, d, w, d].forEach(len => state.project.edges.push({ id: uid(), length: len, corner: "out" }));
+    [w, d, w, d].forEach(len => curSite().edges.push({ id: uid(), length: len, corner: "out" }));
     $("#rectW").value = ""; $("#rectD").value = ""; save(); renderEdges();
     toast("4辺を追加しました");
   };
@@ -108,10 +149,10 @@ function bindProject() {
 function renderEdges() {
   const list = $("#edgeList");
   list.innerHTML = "";
-  const n = state.project.edges.length;
-  state.project.edges.forEach((e, i) => {
+  const n = curSite().edges.length;
+  curSite().edges.forEach((e, i) => {
     if (e.corner !== "in") e.corner = "out";
-    const showCorner = state.project.closed || i < n - 1;
+    const showCorner = curSite().closed || i < n - 1;
     const row = document.createElement("div");
     row.className = "edge-item";
     row.innerHTML = `
@@ -129,7 +170,7 @@ function renderEdges() {
       save(); renderEdges();
     };
     row.querySelector(".del").onclick = () => {
-      state.project.edges = state.project.edges.filter(x => x.id !== e.id);
+      curSite().edges = curSite().edges.filter(x => x.id !== e.id);
       save(); renderEdges();
     };
     list.appendChild(row);
@@ -138,7 +179,7 @@ function renderEdges() {
 }
 
 function updateTotals() {
-  const edges = state.project.edges.filter(e => e.length > 0);
+  const edges = curSite().edges.filter(e => e.length > 0);
   const sum = edges.reduce((a, e) => a + e.length, 0);
   $("#edgeTotals").textContent = edges.length
     ? `辺数: ${edges.length}　外周合計: ${(sum / 1000).toFixed(2)} m（${sum}mm）`
@@ -150,7 +191,7 @@ function updateTotals() {
 function renderPreview(edges) {
   const box = $("#shapePreview");
   if (edges.length < 3) { box.innerHTML = ""; box.style.display = "none"; return; }
-  const g = polygonPoints(edges, state.project.closed);
+  const g = polygonPoints(edges, curSite().closed);
   const xs = g.pts.map(p => p.x), ys = g.pts.map(p => p.y);
   const minX = Math.min(...xs), maxX = Math.max(...xs);
   const minY = Math.min(...ys), maxY = Math.max(...ys);
@@ -159,7 +200,7 @@ function renderPreview(edges) {
   const ptsAttr = g.pts.map(p => `${p.x},${p.y}`).join(" ");
 
   let status = "";
-  if (state.project.closed) {
+  if (curSite().closed) {
     if (g.outCount - g.inCount !== 4) status = `<span class="pv-warn">⚠ 出隅${g.outCount}・入隅${g.inCount}（出隅−入隅=4 が正）</span>`;
     else if (g.gap > TOLERANCE) status = `<span class="pv-warn">⚠ 閉じません（誤差 ${Math.round(g.gap)}mm）</span>`;
     else status = `<span class="pv-ok">✓ 形が閉じています（出隅${g.outCount}・入隅${g.inCount}）</span>`;
@@ -168,7 +209,7 @@ function renderPreview(edges) {
   box.style.display = "block";
   box.innerHTML = `
     <svg viewBox="${minX - pad} ${minY - pad} ${w + pad * 2} ${h + pad * 2}" preserveAspectRatio="xMidYMid meet">
-      <${state.project.closed ? "polygon" : "polyline"} points="${ptsAttr}"
+      <${curSite().closed ? "polygon" : "polyline"} points="${ptsAttr}"
         fill="rgba(31,111,235,.12)" stroke="#4a9eff" stroke-width="${Math.max(w, h) * 0.012}"
         stroke-linejoin="round" />
       <circle cx="0" cy="0" r="${Math.max(w, h) * 0.018}" fill="#e3b341" />
@@ -350,7 +391,7 @@ function renderInvList() {
 /* ---- 結果表示 ---- */
 function renderResult() {
   const area = $("#resultArea");
-  const r = calculate(state);
+  const r = calculate({ project: curSite(), inventory: state.inventory });
   if (r.error) { area.innerHTML = `<p class="empty">${r.error}</p>`; return; }
 
   const shortCls = r.totalShort > 0 ? "bad" : "";
@@ -423,11 +464,177 @@ function renderResult() {
   area.innerHTML = html;
 }
 
+/* ===================================================================
+   現場（サイト）の切り替え・追加・削除
+   =================================================================== */
+function renderSiteBar() {
+  const sel = $("#siteSelect");
+  if (!sel) return;
+  sel.innerHTML = state.sites.map(s =>
+    `<option value="${s.id}"${s.id === state.currentSiteId ? " selected" : ""}>${(s.name || "（無名の現場）").replace(/</g, "&lt;")}</option>`
+  ).join("");
+  $("#siteCount").textContent = state.sites.length + " 現場";
+}
+
+function switchSite(id) {
+  if (!state.sites.find(s => s.id === id)) return;
+  state.currentSiteId = id;
+  save();
+  bindProject(); renderEdges(); renderSiteBar();
+}
+
+function addSite() {
+  const s = newSite("現場" + (state.sites.length + 1));
+  state.sites.push(s);
+  state.currentSiteId = s.id;
+  save();
+  bindProject(); renderEdges(); renderSiteBar();
+  $("#projName").focus();
+  toast("現場を追加しました");
+}
+
+function deleteSite() {
+  if (state.sites.length <= 1) return toast("最後の1現場は削除できません");
+  const cur = curSite();
+  if (!confirm(`現場「${cur.name || "無名"}」を削除しますか？（全端末から消えます）`)) return;
+  state.sites = state.sites.filter(s => s.id !== cur.id);
+  state.currentSiteId = state.sites[0].id;
+  save();
+  bindProject(); renderEdges(); renderSiteBar();
+  toast("現場を削除しました");
+}
+
+function bindSiteBar() {
+  const sel = $("#siteSelect");
+  if (!sel) return;
+  sel.onchange = e => switchSite(e.target.value);
+  $("#addSite").onclick = addSite;
+  $("#delSite").onclick = deleteSite;
+  renderSiteBar();
+}
+
+/* ===================================================================
+   クラウド同期（会社コードで在庫・現場を全端末共有）
+   =================================================================== */
+function applyRemote(data) {
+  if (!data) return;
+  let touched = false;
+  if (data.inventory && JSON.stringify(data.inventory) !== JSON.stringify(state.inventory)) {
+    state.inventory = normalizeInventory(data.inventory); touched = "inv";
+  }
+  if (data.sites && JSON.stringify(data.sites) !== JSON.stringify(state.sites)) {
+    state.sites = data.sites.map(normalizeSite);
+    if (!state.sites.length) { const p = newSite("現場1"); state.sites = [p]; }
+    if (!state.sites.find(s => s.id === state.currentSiteId)) state.currentSiteId = state.sites[0].id;
+    touched = touched ? "both" : "sites";
+  }
+  if (!touched) return;
+  localStorage.setItem("kiso-formwork", JSON.stringify(state));
+
+  if (touched === "inv" || touched === "both") renderInvList();
+  if (touched === "sites" || touched === "both") {
+    renderSiteBar();
+    // 編集中の入力を邪魔しないよう、寸法欄にフォーカスがないときだけ再描画
+    const active = document.activeElement;
+    const editingProject = active && $("#tab-project") && $("#tab-project").contains(active);
+    if (!editingProject) { bindProject(); renderEdges(); }
+  }
+  if ($("#tab-result").classList.contains("active")) renderResult();
+}
+
+function syncStatusLabel(s) {
+  return { off: "未接続", connecting: "接続中…", online: "オンライン同期中", offline: "オフライン（後で同期）", error: "エラー" }[s] || s;
+}
+
+function renderSyncTab() {
+  const box = $("#syncArea");
+  if (!box) return;
+  const connected = window.Sync && Sync.connected;
+  const status = window.Sync ? Sync.status : "off";
+  const dotCls = status === "online" ? "on" : status === "offline" ? "off-net" : status === "error" ? "err" : "";
+
+  if (!connected) {
+    box.innerHTML = `
+      <div class="card">
+        <h2>会社で在庫・現場を共有する</h2>
+        <p class="hint">会社共通の「合言葉（コード）」でつなぐと、在庫と現場が全員のスマホでリアルタイムに共有されます。オフラインでも閲覧でき、電波が戻ると自動同期します。</p>
+        <p class="hint">初回のみ、会社で1人が Firebase（無料）を用意します。手順は <b>FIREBASE_SETUP.md</b> を参照。2人目以降は招待リンク/QRを開くだけです。</p>
+      </div>
+      <div class="card">
+        <h2>① Firebase設定（管理者・初回のみ）</h2>
+        <label>Firebaseの設定（コンソールの設定をそのまま貼り付け）</label>
+        <textarea id="fbCfg" rows="7" placeholder='const firebaseConfig = {\n  apiKey: "...",\n  authDomain: "...",\n  projectId: "...",\n  ...\n};'></textarea>
+      </div>
+      <div class="card">
+        <h2>② 会社コード（合言葉）</h2>
+        <label>全員で同じものを使います（推測されにくい長めの語を推奨）</label>
+        <input id="joinCode" type="text" placeholder="例: yamada-kensetsu-2024-abc" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <button class="btn primary big" id="connectBtn">接続する</button>
+      </div>`;
+    $("#connectBtn").onclick = async () => {
+      const fb = Sync.parseFirebaseConfig($("#fbCfg").value);
+      const code = ($("#joinCode").value || "").trim();
+      if (!fb) return toast("Firebase設定を読み取れません。貼り付け内容を確認してください");
+      if (code.length < 4) return toast("会社コードは4文字以上にしてください");
+      toast("接続しています…");
+      const ok = await Sync.connect(fb, code);
+      if (ok) { renderSyncTab(); toast("接続しました"); }
+      else renderSyncTab();
+    };
+  } else {
+    const link = Sync.inviteLink();
+    box.innerHTML = `
+      <div class="card">
+        <h2>接続状況</h2>
+        <p class="sync-line"><span class="sync-dot ${dotCls}"></span>${syncStatusLabel(status)}</p>
+        <p class="hint">会社コード: <b>${(Sync.code || "").replace(/</g, "&lt;")}</b></p>
+        <p class="hint">在庫と現場は、このコードでつながった全端末で共有されています。</p>
+        <button class="btn" id="disconnectBtn">この端末を切断</button>
+      </div>
+      <div class="card">
+        <h2>仲間を招待</h2>
+        <p class="hint">下のQRを他の人のスマホのカメラで読むか、リンクを送ってください。開くだけで同じ在庫・現場につながります（Firebase設定の再入力は不要）。</p>
+        <div id="inviteQR" class="invite-qr"></div>
+        <button class="btn" id="copyInvite">招待リンクをコピー</button>
+      </div>`;
+    $("#disconnectBtn").onclick = () => {
+      if (!confirm("この端末を同期から切断します（データはクラウドに残ります）。よろしいですか？")) return;
+      Sync.disconnect(); renderSyncTab(); updateSyncChip();
+    };
+    $("#copyInvite").onclick = () => navigator.clipboard.writeText(link).then(() => toast("招待リンクをコピーしました"));
+    const qbox = $("#inviteQR");
+    try {
+      const qr = qrcode(0, "M"); qr.addData(link); qr.make();
+      qbox.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+      const svg = qbox.querySelector("svg"); if (svg) { svg.style.width = "180px"; svg.style.height = "180px"; }
+    } catch (e) { qbox.innerHTML = `<span class="hint">QRを表示できません。リンクをコピーして共有してください。</span>`; }
+  }
+}
+
+function updateSyncChip() {
+  const chip = $("#syncChip");
+  if (!chip) return;
+  const status = window.Sync ? Sync.status : "off";
+  const connected = window.Sync && Sync.connected;
+  chip.className = "sync-chip " + (status === "online" ? "on" : status === "offline" ? "off-net" : status === "error" ? "err" : "");
+  chip.textContent = connected ? (status === "online" ? "同期中" : status === "offline" ? "オフライン" : status === "error" ? "同期エラー" : "接続中") : "";
+  chip.style.display = connected ? "inline-block" : "none";
+}
+
 /* ---- 初期化 ---- */
 bindProject();
 bindInventory();
+bindSiteBar();
 renderEdges();
 renderInvList();
+
+if (window.Sync) {
+  Sync.onData(applyRemote);
+  Sync.onStatus(() => { updateSyncChip(); if ($("#tab-sync") && $("#tab-sync").classList.contains("active")) renderSyncTab(); });
+  Sync.autoStart();
+  renderSyncTab();
+  updateSyncChip();
+}
 
 /* ---- Service Worker 登録（PWA） ---- */
 if ("serviceWorker" in navigator) {

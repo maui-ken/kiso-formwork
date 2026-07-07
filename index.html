@@ -14,18 +14,28 @@
 <body>
   <header class="appbar">
     <h1>基礎型枠 割付計算</h1>
-    <span class="ver">v2.3</span>
+    <span class="ver">v3.0</span>
+    <span id="syncChip" class="sync-chip" style="display:none"></span>
   </header>
 
   <nav class="tabs">
     <button class="tab active" data-tab="project">図面・寸法</button>
     <button class="tab" data-tab="inventory">在庫</button>
     <button class="tab" data-tab="result">計算結果</button>
+    <button class="tab" data-tab="sync">同期</button>
   </nav>
 
   <main>
     <!-- ===== 図面・寸法 ===== -->
     <section id="tab-project" class="panel active">
+      <div class="card site-bar">
+        <div class="site-row">
+          <select id="siteSelect" aria-label="現場を選択"></select>
+          <button class="site-btn" id="addSite" title="現場を追加">＋</button>
+          <button class="site-btn del" id="delSite" title="現場を削除">🗑</button>
+        </div>
+        <span class="site-count" id="siteCount"></span>
+      </div>
       <div class="card">
         <div class="row">
           <label>現場名</label>
@@ -121,10 +131,20 @@
     <section id="tab-result" class="panel">
       <div id="resultArea"></div>
     </section>
+
+    <!-- ===== 同期 ===== -->
+    <section id="tab-sync" class="panel">
+      <div id="syncArea"></div>
+    </section>
   </main>
 
   <div id="toast" class="toast"></div>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
   <script src="engine.js"></script>
+  <script src="sync.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
