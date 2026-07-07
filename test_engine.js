@@ -194,4 +194,96 @@ assert('900優先: 1800は使わない', e11b.pieces.filter(p=>p.label==='1800')
 // usage表も優先順位の並びで返る
 assert('usage先頭が900', r11b.usage[0].width === 900, r11b.usage[0].width);
 
+// ---- 12) 割り切りを優先（グリーディなら端数が出るケースで exact を見つける） ----
+console.log('Test 12: prefer exact division over greedy leftover');
+// 幅 1200(優先1) と 900(優先2)。角なし(leg0)、辺1800 → remaining1800。
+// グリーディ: 1200 → 端数600 が残る。割り切り探索: 900+900 でピッタリ。
+let invDiv = [
+  { type: 'straight', width: 1200, qty: 50 },
+  { type: 'straight', width: 900,  qty: 50 },
+  { type: 'corner',   leg: 0, qty: 9 },
+  { type: 'cornerIn', leg: 0, qty: 9 },
+];
+let rDiv = calculate({
+  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([1800,1800,1800,1800]) },
+  inventory: invDiv,
+});
+let eDiv = rDiv.edgeResults[0];
+assert('割り切り: 900を2枚', eDiv.pieces.filter(p=>p.label==='900').length === 2, JSON.stringify(eDiv.pieces.map(p=>p.label)));
+assert('割り切り: 1200は使わない', eDiv.pieces.filter(p=>p.label==='1200').length === 0, JSON.stringify(eDiv.pieces.map(p=>p.label)));
+assert('割り切り: スライド/板/未処理なし', !eDiv.pieces.some(p=>p.kind==='adjust'||p.kind==='short'), JSON.stringify(eDiv.pieces.map(p=>p.kind)));
+assert('割り切り: leftover 0', eDiv.leftover <= TOLERANCE, eDiv.leftover);
+
+// ---- 13) 割り切れる範囲で優先順位を最大限尊重 ----
+console.log('Test 13: honor priority within exact solutions');
+// 1200+900=2100 が exact。優先1=1200 を使える → 1200×1 + 900×1。
+let rPri = calculate({
+  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([2100,2100,2100,2100]) },
+  inventory: invDiv,
+});
+let ePri = rPri.edgeResults[0];
+assert('優先: 1200を1枚', ePri.pieces.filter(p=>p.label==='1200').length === 1, JSON.stringify(ePri.pieces.map(p=>p.label)));
+assert('優先: 900を1枚', ePri.pieces.filter(p=>p.label==='900').length === 1, JSON.stringify(ePri.pieces.map(p=>p.label)));
+assert('優先: leftover 0', ePri.leftover <= TOLERANCE, ePri.leftover);
+
+// ---- 14) 割り切れないときは端数最小＋スライド/板 ----
+console.log('Test 14: minimal leftover when not divisible');
+// packPanels 単体: 幅[1000,700], R=1250 → 1000(端数250) より 700+... 700+? 550無 → max reachable=1000 leftover250?
+//   実際 reachable: 700,1000,1400,1700,2000... 1250以下の最大 reachable=1000 → leftover250。
+let reach14 = bestReachable(3000, [1000,700]);
+let pk14 = packPanels(1250, [1000,700], reach14);
+assert('packPanels: 端数250', pk14.leftover === 250, pk14.leftover);
+// R=1400 は 700+700 でちょうど
+let pk14b = packPanels(1400, [1000,700], reach14);
+assert('packPanels: 1400は割り切り(端数0)', pk14b.leftover === 0, pk14b.leftover);
+assert('packPanels: 700を2枚', pk14b.counts[700] === 2, JSON.stringify(pk14b.counts));
+
+// ---- 15) 左右で脚の長さが違うコーナー枠（向きを最適化して割り切る） ----
+console.log('Test 15: asymmetric corner legs (150x235) oriented for exact fit');
+// パネル900のみ。辺1200 = 900+150+150、辺1370 = 900+235+235。
+// 各角の150/235の向きを正しく選ばないと割り切れない。
+let invAsym = [
+  { type: 'straight', width: 900, qty: 50 },
+  { type: 'corner', legA: 150, legB: 235, qty: 9 },
+];
+let r15 = calculate({
+  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([1200,1370,1200,1370]) },
+  inventory: invAsym,
+});
+assert('no error', !r15.error, r15.error);
+r15.edgeResults.forEach(er => {
+  assert('辺' + er.idx + ' leftover 0', er.leftover <= TOLERANCE && !er.short, er.leftover);
+  assert('辺' + er.idx + ' スライド/未処理なし', !er.pieces.some(p=>p.kind==='adjust'||p.kind==='short'), JSON.stringify(er.pieces.map(p=>p.label)));
+});
+let cu15 = r15.usage.find(u => u.type === 'corner');
+assert('出隅(150×235) need=4', cu15.need === 4 && cu15.legA === 150 && cu15.legB === 235, JSON.stringify(cu15));
+let asymChip = r15.edgeResults[0].pieces.find(p => p.kind === 'corner');
+assert('チップに向き表記(a→b)', /出隅\(\d+→\d+\)/.test(asymChip.label), asymChip.label);
+
+// ---- 16) コーナー枠を複数サイズ所有 → 割り切れる方を選ぶ ----
+console.log('Test 16: multiple corner sizes, pick the divisible one');
+let invMulti = [
+  { type: 'straight', width: 900, qty: 50 },
+  { type: 'corner', legA: 150, legB: 150, qty: 9 },
+  { type: 'corner', legA: 235, legB: 235, qty: 9 },
+];
+let r16 = calculate({
+  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([1370,1370,1370,1370]) },
+  inventory: invMulti,
+});
+r16.edgeResults.forEach(er => assert('辺' + er.idx + ' leftover 0', er.leftover <= TOLERANCE && !er.short, er.leftover));
+let cu235 = r16.usage.find(u => u.type === 'corner' && u.legA === 235);
+let cu150 = r16.usage.find(u => u.type === 'corner' && u.legA === 150);
+assert('235角を4枚使用', cu235.need === 4, JSON.stringify(cu235));
+assert('150角は不使用', cu150.need === 0, JSON.stringify(cu150));
+
+// ---- 17) 旧データ {leg} の互換（legA/B なし） ----
+console.log('Test 17: legacy {leg} corner data still works');
+let r17 = calculate({
+  project: { thickness: 150, bothFaces: 1, closed: true, pipeRows: 0, edges: edges([9100,7280,9100,7280]) },
+  inventory: inv(), // corner/cornerIn は leg:150 のまま
+});
+let cu17 = r17.usage.find(u => u.type === 'corner');
+assert('旧leg: 出隅 need=4 / legA=150', cu17.need === 4 && cu17.legA === 150 && cu17.legB === 150, JSON.stringify(cu17));
+
 console.log('\n==== RESULT: ' + pass + ' passed, ' + fail + ' failed ====');

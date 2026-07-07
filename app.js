@@ -14,8 +14,8 @@ const defaultState = () => ({
     { id: uid(), type: "straight", width: 900,  qty: 20 },
     { id: uid(), type: "straight", width: 600,  qty: 20 },
     { id: uid(), type: "straight", width: 300,  qty: 20 },
-    { id: uid(), type: "corner",   leg: 150,    qty: 8  },
-    { id: uid(), type: "cornerIn", leg: 150,    qty: 8  },
+    { id: uid(), type: "corner",   legA: 150, legB: 150, qty: 8 },
+    { id: uid(), type: "cornerIn", legA: 150, legB: 150, qty: 8 },
     { id: uid(), type: "adjust",   minW: 0, maxW: 300, cuttable: true, qty: 0 },
     { id: uid(), type: "pipe",     length: 4000, qty: 10 },
     { id: uid(), type: "pipe",     length: 2000, qty: 10 },
@@ -33,6 +33,13 @@ function load() {
       // v1 → v2 移行
       if (s.project.pipeRows == null) s.project.pipeRows = 1;
       s.project.edges.forEach(e => { if (e.corner !== "in" && e.corner !== "out") e.corner = "out"; });
+      // コーナー枠の旧データ {leg} → {legA, legB}
+      s.inventory.forEach(i => {
+        if (i.type === "corner" || i.type === "cornerIn") {
+          if (i.legA == null) i.legA = i.leg || 0;
+          if (i.legB == null) i.legB = i.legA;
+        }
+      });
       return s;
     }
   } catch (e) {}
@@ -193,8 +200,12 @@ function renderInvForm() {
   } else if (invType === "corner" || invType === "cornerIn") {
     f.innerHTML = `
       <div class="row two">
-        <div><label>脚の長さ(mm)<small>角で消費する各辺の寸法</small></label><input id="il" type="number" inputmode="numeric" placeholder="例 150" /></div>
+        <div><label>脚A(mm)<small>角の片側の寸法</small></label><input id="ila" type="number" inputmode="numeric" placeholder="例 150" /></div>
+        <div><label>脚B(mm)<small>反対側。同じなら空欄でOK</small></label><input id="ilb" type="number" inputmode="numeric" placeholder="例 235" /></div>
+      </div>
+      <div class="row two">
         <div><label>所有枚数</label><input id="iq" type="number" inputmode="numeric" placeholder="例 8" /></div>
+        <div></div>
       </div>`;
   } else if (invType === "pipe") {
     f.innerHTML = `
@@ -221,9 +232,9 @@ function addInventory() {
     if (!w) return toast("横幅を入力してください");
     state.inventory.push({ id: uid(), type: "straight", width: w, qty: q || 0 });
   } else if (invType === "corner" || invType === "cornerIn") {
-    const l = +$("#il").value, q = +$("#iq").value;
-    if (!l) return toast("脚の長さを入力してください");
-    state.inventory.push({ id: uid(), type: invType, leg: l, qty: q || 0 });
+    const a = +$("#ila").value, b = +$("#ilb").value || a, q = +$("#iq").value;
+    if (!a) return toast("脚Aを入力してください");
+    state.inventory.push({ id: uid(), type: invType, legA: a, legB: b, qty: q || 0 });
   } else if (invType === "pipe") {
     const l = +$("#ip").value, q = +$("#iq").value;
     if (!l) return toast("長さを入力してください");
@@ -264,10 +275,16 @@ function sortStraightsDesc() {
   save(); renderInvList();
 }
 
+function cornerDim(a, b) {
+  return a === b ? `脚 ${a}mm` : `脚 ${a}×${b}mm`;
+}
+
 function otherRowHTML(i) {
   let label, badge, unit = "枚";
-  if (i.type === "corner") { badge = "出隅"; label = `<b>脚 ${i.leg}mm</b> 出隅コーナー枠`; }
-  else if (i.type === "cornerIn") { badge = "入隅"; label = `<b>脚 ${i.leg}mm</b> 入隅コーナー枠`; }
+  const la = i.legA != null ? i.legA : (i.leg || 0);
+  const lb = i.legB != null ? i.legB : la;
+  if (i.type === "corner") { badge = "出隅"; label = `<b>${cornerDim(la, lb)}</b> 出隅コーナー枠`; }
+  else if (i.type === "cornerIn") { badge = "入隅"; label = `<b>${cornerDim(la, lb)}</b> 入隅コーナー枠`; }
   else if (i.type === "pipe") { badge = "単管"; label = `<b>${i.length}mm</b> 単管`; unit = "本"; }
   else { badge = "調整"; label = i.cuttable ? `<b>板</b> 任意長カット` : `<b>${i.minW}〜${i.maxW}mm</b> スライドパネル`; }
   return `
@@ -285,7 +302,7 @@ function renderInvList() {
   const straights = state.inventory.filter(i => i.type === "straight");
   const order = { corner: 1, cornerIn: 2, adjust: 3, pipe: 4 };
   const others = state.inventory.filter(i => i.type !== "straight")
-    .sort((a, b) => (order[a.type] - order[b.type]) || ((b.leg || b.length || b.maxW || 0) - (a.leg || a.length || a.maxW || 0)));
+    .sort((a, b) => (order[a.type] - order[b.type]) || ((b.legA || b.leg || b.length || b.maxW || 0) - (a.legA || a.leg || a.length || a.maxW || 0)));
 
   if (straights.length) {
     const head = document.createElement("div");
@@ -354,8 +371,8 @@ function renderResult() {
     <table class="tbl">
       <tr><th>種類</th><th>必要</th><th>在庫</th><th>判定</th></tr>`;
   r.usage.forEach(u => {
-    const name = u.type === "corner" ? `出隅コーナー(脚${u.leg})`
-      : u.type === "cornerIn" ? `入隅コーナー(脚${u.leg})`
+    const name = u.type === "corner" ? `出隅コーナー(${cornerDim(u.legA, u.legB).replace("mm", "")})`
+      : u.type === "cornerIn" ? `入隅コーナー(${cornerDim(u.legA, u.legB).replace("mm", "")})`
       : `ヒラパネル ${u.width}mm`;
     const judge = u.short > 0 ? `<span class="tag-short">不足 ${u.short}</span>` : `<span class="tag-ok">OK</span>`;
     html += `<tr><td>${name}</td><td>${u.need}</td><td>${u.have}</td><td>${judge}</td></tr>`;
@@ -388,6 +405,10 @@ function renderResult() {
 
   // 辺ごとの割付
   html += `<div class="card"><h2>辺ごとの割付</h2>`;
+  const hasAsym = r.usage.some(u => (u.type === "corner" || u.type === "cornerIn") && u.legA !== u.legB && u.need > 0);
+  if (hasAsym) {
+    html += `<p class="hint">コーナーの「a→b」は向きの指定：a=この辺側の脚 / b=次の辺側の脚（割り切れるように向きを選んでいます）</p>`;
+  }
   r.edgeResults.forEach(er => {
     html += `<div class="edge-result">
       <div class="eh"><b>${er.face}面・辺${er.idx}</b><span>${er.length}mm</span></div>
