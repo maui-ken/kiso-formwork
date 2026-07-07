@@ -59,9 +59,9 @@ function calculate(state) {
     .map(e => ({ length: e.length, corner: e.corner === "in" ? "in" : "out" }));
   if (!edges.length) return { error: "辺の長さが入力されていません。" };
 
-  const straights = state.inventory
-    .filter(i => i.type === "straight" && i.width > 0)
-    .sort((a, b) => b.width - a.width);
+  // 使用優先順位は在庫内の並び順に従う（先にあるパネルから先に使う）。
+  // 既定は大きい順だが、ユーザーが並べ替えれば小さい枠を優先することもできる。
+  const straights = state.inventory.filter(i => i.type === "straight" && i.width > 0);
   if (!straights.length) return { error: "ヒラパネルが在庫に登録されていません。" };
 
   const cornerOut = state.inventory.find(i => i.type === "corner");

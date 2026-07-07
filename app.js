@@ -236,33 +236,98 @@ function addInventory() {
   save(); renderInvList(); toast("在庫に追加しました");
 }
 
+function delInv(id) {
+  state.inventory = state.inventory.filter(x => x.id !== id);
+  save(); renderInvList();
+}
+
+/* ヒラパネルの使用優先順位を1つ入れ替える（dir: -1=上, +1=下） */
+function moveStraight(id, dir) {
+  const idxs = state.inventory
+    .map((it, ix) => ({ it, ix }))
+    .filter(o => o.it.type === "straight");
+  const pos = idxs.findIndex(o => o.it.id === id);
+  const swap = pos + dir;
+  if (pos < 0 || swap < 0 || swap >= idxs.length) return;
+  const a = idxs[pos].ix, b = idxs[swap].ix;
+  const tmp = state.inventory[a];
+  state.inventory[a] = state.inventory[b];
+  state.inventory[b] = tmp;
+  save(); renderInvList();
+}
+
+/* ヒラパネルを大きい順（既定の優先順位）に並べ替え */
+function sortStraightsDesc() {
+  const straights = state.inventory.filter(i => i.type === "straight").sort((a, b) => b.width - a.width);
+  const others = state.inventory.filter(i => i.type !== "straight");
+  state.inventory = [...straights, ...others];
+  save(); renderInvList();
+}
+
+function otherRowHTML(i) {
+  let label, badge, unit = "枚";
+  if (i.type === "corner") { badge = "出隅"; label = `<b>脚 ${i.leg}mm</b> 出隅コーナー枠`; }
+  else if (i.type === "cornerIn") { badge = "入隅"; label = `<b>脚 ${i.leg}mm</b> 入隅コーナー枠`; }
+  else if (i.type === "pipe") { badge = "単管"; label = `<b>${i.length}mm</b> 単管`; unit = "本"; }
+  else { badge = "調整"; label = i.cuttable ? `<b>板</b> 任意長カット` : `<b>${i.minW}〜${i.maxW}mm</b> スライドパネル`; }
+  return `
+    <span class="badge ${i.type}">${badge}</span>
+    <span class="name">${label}</span>
+    <span class="qty">${i.cuttable ? "—" : i.qty + unit}</span>
+    <button class="del">×</button>`;
+}
+
 function renderInvList() {
   const list = $("#invList");
   list.innerHTML = "";
-  const order = { straight: 0, corner: 1, cornerIn: 2, adjust: 3, pipe: 4 };
-  const items = [...state.inventory].sort((a, b) =>
-    (order[a.type] - order[b.type]) || ((b.width || b.leg || b.length || b.maxW) - (a.width || a.leg || a.length || a.maxW)));
-  if (!items.length) { list.innerHTML = `<p class="empty">在庫が未登録です</p>`; return; }
-  items.forEach(i => {
-    const row = document.createElement("div");
-    row.className = "inv-row";
-    let label, badge, unit = "枚";
-    if (i.type === "straight") { badge = "パネル"; label = `<b>${i.width}mm</b> ヒラパネル`; }
-    else if (i.type === "corner") { badge = "出隅"; label = `<b>脚 ${i.leg}mm</b> 出隅コーナー枠`; }
-    else if (i.type === "cornerIn") { badge = "入隅"; label = `<b>脚 ${i.leg}mm</b> 入隅コーナー枠`; }
-    else if (i.type === "pipe") { badge = "単管"; label = `<b>${i.length}mm</b> 単管`; unit = "本"; }
-    else { badge = "調整"; label = i.cuttable ? `<b>板</b> 任意長カット` : `<b>${i.minW}〜${i.maxW}mm</b> スライドパネル`; }
-    row.innerHTML = `
-      <span class="badge ${i.type}">${badge}</span>
-      <span class="name">${label}</span>
-      <span class="qty">${i.cuttable ? "—" : i.qty + unit}</span>
-      <button class="del">×</button>`;
-    row.querySelector(".del").onclick = () => {
-      state.inventory = state.inventory.filter(x => x.id !== i.id);
-      save(); renderInvList();
-    };
-    list.appendChild(row);
-  });
+  if (!state.inventory.length) { list.innerHTML = `<p class="empty">在庫が未登録です</p>`; return; }
+
+  const straights = state.inventory.filter(i => i.type === "straight");
+  const order = { corner: 1, cornerIn: 2, adjust: 3, pipe: 4 };
+  const others = state.inventory.filter(i => i.type !== "straight")
+    .sort((a, b) => (order[a.type] - order[b.type]) || ((b.leg || b.length || b.maxW || 0) - (a.leg || a.length || a.maxW || 0)));
+
+  if (straights.length) {
+    const head = document.createElement("div");
+    head.className = "list-head";
+    head.innerHTML = `<span>ヒラパネル<small>上ほど先に使う</small></span>` +
+      (straights.length > 1 ? `<button class="mini" id="sortDesc">大きい順に並べる</button>` : "");
+    list.appendChild(head);
+    if (straights.length > 1) head.querySelector("#sortDesc").onclick = sortStraightsDesc;
+
+    straights.forEach((i, idx) => {
+      const row = document.createElement("div");
+      row.className = "inv-row";
+      row.innerHTML = `
+        <span class="rank">${idx + 1}</span>
+        <span class="badge straight">パネル</span>
+        <span class="name"><b>${i.width}mm</b> ヒラパネル</span>
+        <span class="qty">${i.qty}枚</span>
+        <span class="reorder">
+          <button class="up" ${idx === 0 ? "disabled" : ""} aria-label="優先度を上げる">▲</button>
+          <button class="down" ${idx === straights.length - 1 ? "disabled" : ""} aria-label="優先度を下げる">▼</button>
+        </span>
+        <button class="del">×</button>`;
+      row.querySelector(".up").onclick = () => moveStraight(i.id, -1);
+      row.querySelector(".down").onclick = () => moveStraight(i.id, 1);
+      row.querySelector(".del").onclick = () => delInv(i.id);
+      list.appendChild(row);
+    });
+  }
+
+  if (others.length) {
+    const head = document.createElement("div");
+    head.className = "list-head";
+    head.innerHTML = `<span>コーナー枠・スライド・単管</span>`;
+    list.appendChild(head);
+    others.forEach(i => {
+      const row = document.createElement("div");
+      row.className = "inv-row";
+      row.innerHTML = otherRowHTML(i);
+      row.querySelector(".del").onclick = () => delInv(i.id);
+      list.appendChild(row);
+    });
+  }
 }
 
 /* ---- 結果表示 ---- */

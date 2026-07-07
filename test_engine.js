@@ -166,4 +166,32 @@ assert('入隅未登録の注意あり', r10.unresolved.some(u => u.indexOf('入
 let ci10 = r10.usage.find(u => u.type === 'cornerIn');
 assert('入隅は不足4', ci10.need === 4 && ci10.short === 4, JSON.stringify(ci10));
 
+// ---- 11) パネルの使用優先順位（並び順に従う） ----
+console.log('Test 11: panel priority follows inventory order');
+// 既定（大きい順）: L=3600 closed leg150 → rem 3300 = 1800+900+600 (rem0)
+let r11a = calculate({
+  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([3600,3600,3600,3600]) },
+  inventory: inv(),
+});
+let e11a = r11a.edgeResults[0];
+assert('既定: 1800を1枚使う', e11a.pieces.filter(p=>p.label==='1800').length === 1, JSON.stringify(e11a.pieces.map(p=>p.label)));
+
+// 900を最優先に並べ替え → 900から先に詰める
+let invPri = inv();
+invPri.sort((a,b) => {
+  if (a.type!=='straight' || b.type!=='straight') return 0;
+  const rank = { 900:0, 1800:1, 600:2, 300:3 };
+  return (rank[a.width] ?? 9) - (rank[b.width] ?? 9);
+});
+let r11b = calculate({
+  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([3600,3600,3600,3600]) },
+  inventory: invPri,
+});
+let e11b = r11b.edgeResults[0];
+let c900 = e11b.pieces.filter(p=>p.label==='900').length;
+assert('900優先: 900を3枚使う', c900 === 3, JSON.stringify(e11b.pieces.map(p=>p.label)));
+assert('900優先: 1800は使わない', e11b.pieces.filter(p=>p.label==='1800').length === 0, JSON.stringify(e11b.pieces.map(p=>p.label)));
+// usage表も優先順位の並びで返る
+assert('usage先頭が900', r11b.usage[0].width === 900, r11b.usage[0].width);
+
 console.log('\n==== RESULT: ' + pass + ' passed, ' + fail + ' failed ====');
