@@ -52,12 +52,26 @@ function bestReachable(maxLen, widths) {
   return reach;
 }
 
-/* 残り長さ R を、なるべく割り切れる（端数を最小化する）ように所有パネルで埋める。
-   ① まず R 以下で「パネルだけでちょうど作れる」最大長 target を求める（端数最小）。
-   ② その target を、使用優先順位（priorityWidths の並び）を尊重して分解する
-      ＝上位の枠を、残りが割り切れる範囲で可能な限り多く使う。
+/* minCnt[v] = 長さ v をパネルだけでちょうど作るのに必要な最小枚数（作れなければ BIG）。 */
+var MC_BIG = 1e9;
+function minCounts(maxLen, widths) {
+  const mc = new Int32Array(Math.max(0, maxLen) + 1);
+  for (let v = 1; v <= maxLen; v++) {
+    let m = MC_BIG;
+    for (let k = 0; k < widths.length; k++) {
+      const w = widths[k];
+      if (w > 0 && w <= v) { const c = mc[v - w] + 1; if (c < m) m = c; }
+    }
+    mc[v] = m;
+  }
+  return mc; // mc[0] = 0
+}
+
+/* 残り長さ R を、①割り切り優先（端数最小）→②枚数最小→③優先順位の順で埋める。
+   ① R 以下でパネルだけで作れる最大長 target を求める（端数 = R - target を最小化）。
+   ② target を最小枚数で分解（minCnt）。同じ枚数なら priorityWidths の並びを優先。
    端数（R - target）はスライド枠/板で仕上げるため leftover として返す。 */
-function packPanels(R, priorityWidths, reach) {
+function packPanels(R, priorityWidths, reach, minCnt) {
   R = Math.round(R);
   if (R <= TOLERANCE) return { counts: {}, seq: [], leftover: Math.max(0, R) };
 
@@ -67,13 +81,17 @@ function packPanels(R, priorityWidths, reach) {
   const counts = {};
   const seq = [];
   let remaining = target, guard = 0;
-  for (let k = 0; k < priorityWidths.length; k++) {
-    const w = priorityWidths[k];
-    while (w > 0 && w <= remaining && reach[remaining - w] && guard++ < 100000) {
-      counts[w] = (counts[w] || 0) + 1;
-      seq.push(w);
-      remaining -= w;
+  while (remaining > 0 && guard++ < 100000) {
+    // 最小枚数の経路を保ちつつ、優先順位の高い幅を選ぶ
+    let picked = -1;
+    for (let k = 0; k < priorityWidths.length; k++) {
+      const w = priorityWidths[k];
+      if (w > 0 && w <= remaining && reach[remaining - w] && minCnt[remaining - w] === minCnt[remaining] - 1) { picked = w; break; }
     }
+    if (picked < 0) break; // 到達不能（保険）
+    counts[picked] = (counts[picked] || 0) + 1;
+    seq.push(picked);
+    remaining -= picked;
   }
 
   let leftover = R - target;
@@ -170,10 +188,18 @@ function calculate(state) {
     .map(e => ({ length: e.length, corner: e.corner === "in" ? "in" : "out" }));
   if (!edges.length) return { error: "辺の長さが入力されていません。" };
 
+  // 型枠の高さでの絞り込み。現場に高さ指定があれば、その高さ（＋高さ未指定=汎用）だけ使う。
+  const formH = Math.round(+p.formHeight || 0);
+  const heightOK = it => formH === 0 || !it.height || +it.height === formH;
+
   // 使用優先順位は在庫内の並び順に従う（先にあるパネルから先に使う）。
   // 既定は大きい順だが、ユーザーが並べ替えれば小さい枠を優先することもできる。
-  const straights = state.inventory.filter(i => i.type === "straight" && i.width > 0);
-  if (!straights.length) return { error: "ヒラパネルが在庫に登録されていません。" };
+  const straights = state.inventory.filter(i => i.type === "straight" && i.width > 0 && heightOK(i));
+  if (!straights.length) {
+    return { error: formH > 0
+      ? "高さ " + formH + "mm のヒラパネルが在庫にありません。（現場の型枠の高さ、または在庫の高さを確認してください）"
+      : "ヒラパネルが在庫に登録されていません。" };
+  }
 
   // コーナー枠: 脚A×脚B（左右で長さが違うものに対応。旧データの leg は A=B として扱う）
   // 同じ種類を複数サイズ所有していてもよい。どの角にどれをどの向きで使うかは
@@ -182,14 +208,14 @@ function calculate(state) {
     const legs = legsOfItem(it);
     return { id: it.id || ("v" + Math.random().toString(36).slice(2, 7)), qty: it.qty || 0, a: legs.a, b: legs.b };
   });
-  let outVariants = mkVariants(state.inventory.filter(i => i.type === "corner"));
-  let inVariants  = mkVariants(state.inventory.filter(i => i.type === "cornerIn"));
+  let outVariants = mkVariants(state.inventory.filter(i => i.type === "corner" && heightOK(i)));
+  let inVariants  = mkVariants(state.inventory.filter(i => i.type === "cornerIn" && heightOK(i)));
   const outMissing = !outVariants.length;
   const inMissing  = !inVariants.length;
   if (outMissing) outVariants = [{ id: "_outSynth", qty: 0, a: inVariants.length ? inVariants[0].a : 0, b: inVariants.length ? inVariants[0].b : 0, synth: true }];
   if (inMissing)  inVariants  = [{ id: "_inSynth",  qty: 0, a: outVariants[0].a, b: outVariants[0].b, synth: true }];
 
-  const adjusters = state.inventory.filter(i => i.type === "adjust").sort((a, b) => a.maxW - b.maxW);
+  const adjusters = state.inventory.filter(i => i.type === "adjust" && heightOK(i)).sort((a, b) => a.maxW - b.maxW);
   const board = adjusters.find(a => a.cuttable);
 
   const pipes = state.inventory
@@ -206,6 +232,7 @@ function calculate(state) {
   straights.forEach(s => { if (!priorityWidths.includes(s.width)) priorityWidths.push(s.width); });
   const maxLen = Math.round(Math.max(...edges.map(e => e.length)) + 2 * (p.thickness || 0)) + 1;
   const reach = bestReachable(maxLen, priorityWidths);
+  const minCnt = minCounts(maxLen, priorityWidths);
   // best[v] = v 以下でパネルだけで作れる最大長（端数 = v - best[v]）
   const best = new Int32Array(maxLen + 1);
   for (let v = 1; v <= maxLen; v++) best[v] = reach[v] ? v : best[v - 1];
@@ -282,8 +309,8 @@ function calculate(state) {
         return;
       }
 
-      // 優先順位を尊重しつつ、割り切れるようにパネルを割り振る
-      const pack = packPanels(remaining, priorityWidths, reach);
+      // 割り切り優先 → 枚数最小 → 優先順位 の順でパネルを割り振る
+      const pack = packPanels(remaining, priorityWidths, reach, minCnt);
       pack.seq.forEach(w => {
         need[w]++;
         pieces.push({ kind: "straight", label: "" + w, width: w });
@@ -323,11 +350,12 @@ function calculate(state) {
 
   const outNeedTotal = outVariants.reduce((a, v) => a + (cornerNeed[v.id] || 0), 0);
   const inNeedTotal  = inVariants.reduce((a, v) => a + (cornerNeed[v.id] || 0), 0);
-  if (outNeedTotal > 0 && outMissing) unresolved.push("出隅コーナー枠が在庫未登録です（必要 " + outNeedTotal + "）");
-  if (inNeedTotal > 0 && inMissing) unresolved.push("入隅コーナー枠が在庫未登録です（必要 " + inNeedTotal + "・脚は出隅と同寸で仮計算）");
+  const hSfx = formH > 0 ? "（高さ " + formH + "mm）" : "";
+  if (outNeedTotal > 0 && outMissing) unresolved.push("出隅コーナー枠" + hSfx + "が在庫にありません（必要 " + outNeedTotal + "）");
+  if (inNeedTotal > 0 && inMissing) unresolved.push("入隅コーナー枠" + hSfx + "が在庫にありません（必要 " + inNeedTotal + "・脚は出隅と同寸で仮計算）");
 
   const usage = straights.map(s => ({
-    type: "straight", width: s.width, need: need[s.width], have: s.qty,
+    type: "straight", width: s.width, height: s.height || 0, need: need[s.width], have: s.qty,
     short: Math.max(0, need[s.width] - s.qty),
   }));
   [[outVariants, "corner"], [inVariants, "cornerIn"]].forEach(pair => {
@@ -376,4 +404,4 @@ function calculate(state) {
   };
 }
 
-if (typeof module !== "undefined" && module.exports) module.exports = { calculate, polygonPoints, pipeCombo, packPanels, bestReachable, TOLERANCE };
+if (typeof module !== "undefined" && module.exports) module.exports = { calculate, polygonPoints, pipeCombo, packPanels, bestReachable, minCounts, TOLERANCE };

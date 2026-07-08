@@ -14,7 +14,7 @@
 <body>
   <header class="appbar">
     <h1>基礎型枠 割付計算</h1>
-    <span class="ver">v3.0</span>
+    <span class="ver">v3.2</span>
     <span id="syncChip" class="sync-chip" style="display:none"></span>
   </header>
 
@@ -61,7 +61,11 @@
             <input id="pipeRows" type="number" inputmode="numeric" value="1" min="0" />
             <small>型枠に水平に流す段数（0で計算しない）</small>
           </div>
-          <div></div>
+          <div>
+            <label>型枠の高さ(mm)</label>
+            <input id="formHeight" type="number" inputmode="numeric" placeholder="未指定" min="0" />
+            <small>指定するとその高さの在庫だけで計算（空欄=全部使う）</small>
+          </div>
         </div>
       </div>
 

@@ -9,7 +9,7 @@
 function uid() { return Math.random().toString(36).slice(2, 9); }
 
 function newSite(name) {
-  return { id: uid(), name: name || "", thickness: 150, bothFaces: 1, closed: true, pipeRows: 1, edges: [] };
+  return { id: uid(), name: name || "", thickness: 150, bothFaces: 1, closed: true, pipeRows: 1, formHeight: 0, edges: [] };
 }
 
 const defaultState = () => {
@@ -48,6 +48,7 @@ function curSite() {
 function normalizeSite(p) {
   if (!p.id) p.id = uid();
   if (p.pipeRows == null) p.pipeRows = 1;
+  if (p.formHeight == null) p.formHeight = 0;
   if (!Array.isArray(p.edges)) p.edges = [];
   p.edges.forEach(e => { if (e.corner !== "in" && e.corner !== "out") e.corner = "out"; });
   return p;
@@ -113,12 +114,14 @@ function bindProject() {
   $("#thickness").value = curSite().thickness;
   $("#bothFaces").value = curSite().bothFaces;
   $("#pipeRows").value = curSite().pipeRows;
+  $("#formHeight").value = curSite().formHeight || "";
   $("#closed").checked = curSite().closed;
 
   $("#projName").oninput = e => { curSite().name = e.target.value; save(); renderSiteBar(); };
   $("#thickness").oninput = e => { curSite().thickness = +e.target.value || 0; save(); };
   $("#bothFaces").onchange = e => { curSite().bothFaces = +e.target.value; save(); };
   $("#pipeRows").oninput = e => { curSite().pipeRows = Math.max(0, +e.target.value || 0); save(); };
+  $("#formHeight").oninput = e => { curSite().formHeight = Math.max(0, +e.target.value || 0); save(); };
   $("#closed").onchange = e => { curSite().closed = e.target.checked; save(); renderEdges(); };
 
   $("#addEdge").onclick = () => {
@@ -237,6 +240,10 @@ function renderInvForm() {
       <div class="row two">
         <div><label>横幅(mm)</label><input id="iw" type="number" inputmode="numeric" placeholder="例 1800" /></div>
         <div><label>所有枚数</label><input id="iq" type="number" inputmode="numeric" placeholder="例 20" /></div>
+      </div>
+      <div class="row two">
+        <div><label>高さ(mm)<small>空欄=高さ指定なし</small></label><input id="ih" type="number" inputmode="numeric" placeholder="例 600" /></div>
+        <div></div>
       </div>`;
   } else if (invType === "corner" || invType === "cornerIn") {
     f.innerHTML = `
@@ -246,7 +253,7 @@ function renderInvForm() {
       </div>
       <div class="row two">
         <div><label>所有枚数</label><input id="iq" type="number" inputmode="numeric" placeholder="例 8" /></div>
-        <div></div>
+        <div><label>高さ(mm)<small>空欄=指定なし</small></label><input id="ih" type="number" inputmode="numeric" placeholder="例 600" /></div>
       </div>`;
   } else if (invType === "pipe") {
     f.innerHTML = `
@@ -263,19 +270,25 @@ function renderInvForm() {
       <div class="row two">
         <div><label>所有数</label><input id="iq" type="number" inputmode="numeric" placeholder="例 4" /></div>
         <div><label>板(任意長カット)</label><select id="icut"><option value="0">いいえ(スライド)</option><option value="1">はい(板)</option></select></div>
+      </div>
+      <div class="row two">
+        <div><label>高さ(mm)<small>空欄=指定なし</small></label><input id="ih" type="number" inputmode="numeric" placeholder="例 600" /></div>
+        <div></div>
       </div>`;
   }
 }
 
 function addInventory() {
+  const hEl = $("#ih");
+  const h = hEl ? (+hEl.value || 0) : 0;
   if (invType === "straight") {
     const w = +$("#iw").value, q = +$("#iq").value;
     if (!w) return toast("横幅を入力してください");
-    state.inventory.push({ id: uid(), type: "straight", width: w, qty: q || 0 });
+    state.inventory.push({ id: uid(), type: "straight", width: w, height: h, qty: q || 0 });
   } else if (invType === "corner" || invType === "cornerIn") {
     const a = +$("#ila").value, b = +$("#ilb").value || a, q = +$("#iq").value;
     if (!a) return toast("脚Aを入力してください");
-    state.inventory.push({ id: uid(), type: invType, legA: a, legB: b, qty: q || 0 });
+    state.inventory.push({ id: uid(), type: invType, legA: a, legB: b, height: h, qty: q || 0 });
   } else if (invType === "pipe") {
     const l = +$("#ip").value, q = +$("#iq").value;
     if (!l) return toast("長さを入力してください");
@@ -283,14 +296,108 @@ function addInventory() {
   } else {
     const min = +$("#imin").value || 0, max = +$("#imax").value, q = +$("#iq").value, cut = $("#icut").value === "1";
     if (!cut && !max) return toast("対応最大を入力してください");
-    state.inventory.push({ id: uid(), type: "adjust", minW: min, maxW: max || 999999, qty: q || 0, cuttable: cut });
+    state.inventory.push({ id: uid(), type: "adjust", minW: min, maxW: max || 999999, height: h, qty: q || 0, cuttable: cut });
   }
   save(); renderInvList(); toast("在庫に追加しました");
 }
 
 function delInv(id) {
+  if (!confirm("この在庫を削除しますか？")) return;
   state.inventory = state.inventory.filter(x => x.id !== id);
+  if (editingId === id) editingId = null;
   save(); renderInvList();
+}
+
+/* ---- 在庫の編集 ---- */
+let editingId = null;
+function startEdit(id) { editingId = id; renderInvList(); }
+function cancelEdit() { editingId = null; renderInvList(); }
+
+function saveEdit(id) {
+  const i = state.inventory.find(x => x.id === id);
+  if (!i) return;
+  const num = sel => +($(sel) ? $(sel).value : 0) || 0;
+  if (i.type === "straight") {
+    const w = num("#eiw"); if (!w) return toast("横幅を入力してください");
+    i.width = w; i.height = num("#eih"); i.qty = num("#eiq");
+  } else if (i.type === "corner" || i.type === "cornerIn") {
+    const a = num("#eila"); if (!a) return toast("脚Aを入力してください");
+    i.legA = a; i.legB = num("#eilb") || a; i.height = num("#eih"); i.qty = num("#eiq");
+    delete i.leg;
+  } else if (i.type === "pipe") {
+    const l = num("#eip"); if (!l) return toast("長さを入力してください");
+    i.length = l; i.qty = num("#eiq");
+  } else {
+    const cut = $("#eicut").value === "1", max = num("#eimax");
+    if (!cut && !max) return toast("対応最大を入力してください");
+    i.minW = num("#eimin"); i.maxW = max || 999999; i.cuttable = cut; i.height = num("#eih"); i.qty = num("#eiq");
+  }
+  editingId = null;
+  save(); renderInvList(); toast("更新しました");
+}
+
+/* 編集フォーム（種類ごとに項目が異なる。値は既存を反映） */
+function editFormHTML(i) {
+  const v = x => (x || x === 0) ? x : "";
+  let fields = "";
+  if (i.type === "straight") {
+    fields = `
+      <div class="row two">
+        <div><label>横幅(mm)</label><input id="eiw" type="number" inputmode="numeric" value="${v(i.width)}" /></div>
+        <div><label>所有枚数</label><input id="eiq" type="number" inputmode="numeric" value="${v(i.qty)}" /></div>
+      </div>
+      <div class="row two">
+        <div><label>高さ(mm)<small>空欄=指定なし</small></label><input id="eih" type="number" inputmode="numeric" value="${i.height ? i.height : ""}" placeholder="未指定" /></div>
+        <div></div>
+      </div>`;
+  } else if (i.type === "corner" || i.type === "cornerIn") {
+    const la = i.legA != null ? i.legA : (i.leg || "");
+    fields = `
+      <div class="row two">
+        <div><label>脚A(mm)</label><input id="eila" type="number" inputmode="numeric" value="${v(la)}" /></div>
+        <div><label>脚B(mm)<small>同じなら空欄</small></label><input id="eilb" type="number" inputmode="numeric" value="${i.legB != null && i.legB !== la ? i.legB : ""}" /></div>
+      </div>
+      <div class="row two">
+        <div><label>所有枚数</label><input id="eiq" type="number" inputmode="numeric" value="${v(i.qty)}" /></div>
+        <div><label>高さ(mm)<small>空欄=指定なし</small></label><input id="eih" type="number" inputmode="numeric" value="${i.height ? i.height : ""}" placeholder="未指定" /></div>
+      </div>`;
+  } else if (i.type === "pipe") {
+    fields = `
+      <div class="row two">
+        <div><label>長さ(mm)</label><input id="eip" type="number" inputmode="numeric" value="${v(i.length)}" /></div>
+        <div><label>所有本数</label><input id="eiq" type="number" inputmode="numeric" value="${v(i.qty)}" /></div>
+      </div>`;
+  } else {
+    fields = `
+      <div class="row two">
+        <div><label>対応最小(mm)</label><input id="eimin" type="number" inputmode="numeric" value="${v(i.minW)}" /></div>
+        <div><label>対応最大(mm)</label><input id="eimax" type="number" inputmode="numeric" value="${i.maxW && i.maxW < 999999 ? i.maxW : ""}" /></div>
+      </div>
+      <div class="row two">
+        <div><label>所有数</label><input id="eiq" type="number" inputmode="numeric" value="${v(i.qty)}" /></div>
+        <div><label>板(任意長カット)</label><select id="eicut"><option value="0"${i.cuttable ? "" : " selected"}>いいえ(スライド)</option><option value="1"${i.cuttable ? " selected" : ""}>はい(板)</option></select></div>
+      </div>
+      <div class="row two">
+        <div><label>高さ(mm)<small>空欄=指定なし</small></label><input id="eih" type="number" inputmode="numeric" value="${i.height ? i.height : ""}" placeholder="未指定" /></div>
+        <div></div>
+      </div>`;
+  }
+  return `<div class="inv-edit">
+    ${fields}
+    <div class="edit-actions">
+      <button class="btn" id="editCancel">キャンセル</button>
+      <button class="btn primary" id="editSave">保存</button>
+    </div>
+  </div>`;
+}
+
+function appendEditRow(list, i) {
+  const row = document.createElement("div");
+  row.className = "inv-row editing";
+  row.innerHTML = editFormHTML(i);
+  row.querySelector("#editSave").onclick = () => saveEdit(i.id);
+  row.querySelector("#editCancel").onclick = cancelEdit;
+  list.appendChild(row);
 }
 
 /* ヒラパネルの使用優先順位を1つ入れ替える（dir: -1=上, +1=下） */
@@ -320,18 +427,23 @@ function cornerDim(a, b) {
   return a === b ? `脚 ${a}mm` : `脚 ${a}×${b}mm`;
 }
 
+function heightTag(h) {
+  return h ? `<span class="htag">H${h}</span>` : "";
+}
+
 function otherRowHTML(i) {
   let label, badge, unit = "枚";
   const la = i.legA != null ? i.legA : (i.leg || 0);
   const lb = i.legB != null ? i.legB : la;
-  if (i.type === "corner") { badge = "出隅"; label = `<b>${cornerDim(la, lb)}</b> 出隅コーナー枠`; }
-  else if (i.type === "cornerIn") { badge = "入隅"; label = `<b>${cornerDim(la, lb)}</b> 入隅コーナー枠`; }
+  if (i.type === "corner") { badge = "出隅"; label = `<b>${cornerDim(la, lb)}</b> 出隅コーナー枠${heightTag(i.height)}`; }
+  else if (i.type === "cornerIn") { badge = "入隅"; label = `<b>${cornerDim(la, lb)}</b> 入隅コーナー枠${heightTag(i.height)}`; }
   else if (i.type === "pipe") { badge = "単管"; label = `<b>${i.length}mm</b> 単管`; unit = "本"; }
-  else { badge = "調整"; label = i.cuttable ? `<b>板</b> 任意長カット` : `<b>${i.minW}〜${i.maxW}mm</b> スライドパネル`; }
+  else { badge = "調整"; label = (i.cuttable ? `<b>板</b> 任意長カット` : `<b>${i.minW}〜${i.maxW}mm</b> スライドパネル`) + heightTag(i.height); }
   return `
     <span class="badge ${i.type}">${badge}</span>
     <span class="name">${label}</span>
     <span class="qty">${i.cuttable ? "—" : i.qty + unit}</span>
+    <button class="edit" aria-label="編集">✎</button>
     <button class="del">×</button>`;
 }
 
@@ -354,20 +466,23 @@ function renderInvList() {
     if (straights.length > 1) head.querySelector("#sortDesc").onclick = sortStraightsDesc;
 
     straights.forEach((i, idx) => {
+      if (editingId === i.id) { appendEditRow(list, i); return; }
       const row = document.createElement("div");
       row.className = "inv-row";
       row.innerHTML = `
         <span class="rank">${idx + 1}</span>
         <span class="badge straight">パネル</span>
-        <span class="name"><b>${i.width}mm</b> ヒラパネル</span>
+        <span class="name"><b>${i.width}mm</b> ヒラパネル${heightTag(i.height)}</span>
         <span class="qty">${i.qty}枚</span>
         <span class="reorder">
           <button class="up" ${idx === 0 ? "disabled" : ""} aria-label="優先度を上げる">▲</button>
           <button class="down" ${idx === straights.length - 1 ? "disabled" : ""} aria-label="優先度を下げる">▼</button>
         </span>
+        <button class="edit" aria-label="編集">✎</button>
         <button class="del">×</button>`;
       row.querySelector(".up").onclick = () => moveStraight(i.id, -1);
       row.querySelector(".down").onclick = () => moveStraight(i.id, 1);
+      row.querySelector(".edit").onclick = () => startEdit(i.id);
       row.querySelector(".del").onclick = () => delInv(i.id);
       list.appendChild(row);
     });
@@ -379,9 +494,11 @@ function renderInvList() {
     head.innerHTML = `<span>コーナー枠・スライド・単管</span>`;
     list.appendChild(head);
     others.forEach(i => {
+      if (editingId === i.id) { appendEditRow(list, i); return; }
       const row = document.createElement("div");
       row.className = "inv-row";
       row.innerHTML = otherRowHTML(i);
+      row.querySelector(".edit").onclick = () => startEdit(i.id);
       row.querySelector(".del").onclick = () => delInv(i.id);
       list.appendChild(row);
     });
@@ -414,7 +531,7 @@ function renderResult() {
   r.usage.forEach(u => {
     const name = u.type === "corner" ? `出隅コーナー(${cornerDim(u.legA, u.legB).replace("mm", "")})`
       : u.type === "cornerIn" ? `入隅コーナー(${cornerDim(u.legA, u.legB).replace("mm", "")})`
-      : `ヒラパネル ${u.width}mm`;
+      : `ヒラパネル ${u.width}mm${u.height ? " ×H" + u.height : ""}`;
     const judge = u.short > 0 ? `<span class="tag-short">不足 ${u.short}</span>` : `<span class="tag-ok">OK</span>`;
     html += `<tr><td>${name}</td><td>${u.need}</td><td>${u.have}</td><td>${judge}</td></tr>`;
   });

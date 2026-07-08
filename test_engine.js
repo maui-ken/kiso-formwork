@@ -162,37 +162,24 @@ let r10 = calculate({
   project: { thickness: 150, bothFaces: 1, closed: true, pipeRows: 0, edges: edges([9100,7280,9100,7280]) },
   inventory: invB,
 });
-assert('入隅未登録の注意あり', r10.unresolved.some(u => u.indexOf('入隅コーナー枠が在庫未登録') >= 0), JSON.stringify(r10.unresolved));
+assert('入隅未登録の注意あり', r10.unresolved.some(u => u.indexOf('入隅コーナー枠') >= 0 && u.indexOf('在庫にありません') >= 0), JSON.stringify(r10.unresolved));
 let ci10 = r10.usage.find(u => u.type === 'cornerIn');
 assert('入隅は不足4', ci10.need === 4 && ci10.short === 4, JSON.stringify(ci10));
 
-// ---- 11) パネルの使用優先順位（並び順に従う） ----
-console.log('Test 11: panel priority follows inventory order');
-// 既定（大きい順）: L=3600 closed leg150 → rem 3300 = 1800+900+600 (rem0)
-let r11a = calculate({
-  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([3600,3600,3600,3600]) },
-  inventory: inv(),
-});
+// ---- 11) 優先順位は「同じ枚数のとき」のタイブレークとして効く ----
+console.log('Test 11: priority breaks ties among equal-count solutions');
+// 幅 400/500/300、角なし(leg0)、辺800 → remaining800。
+// 800を2枚で作る方法: {400,400} と {500,300}（どちらも2枚）。優先順位で決まる。
+function invTie(order) {
+  const s = { 400:{type:'straight',width:400,qty:50}, 500:{type:'straight',width:500,qty:50}, 300:{type:'straight',width:300,qty:50} };
+  return order.map(w => s[w]).concat([{type:'corner',legA:0,legB:0,qty:9},{type:'cornerIn',legA:0,legB:0,qty:9}]);
+}
+let r11a = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([800,800,800,800])}, inventory: invTie([400,500,300]) });
 let e11a = r11a.edgeResults[0];
-assert('既定: 1800を1枚使う', e11a.pieces.filter(p=>p.label==='1800').length === 1, JSON.stringify(e11a.pieces.map(p=>p.label)));
-
-// 900を最優先に並べ替え → 900から先に詰める
-let invPri = inv();
-invPri.sort((a,b) => {
-  if (a.type!=='straight' || b.type!=='straight') return 0;
-  const rank = { 900:0, 1800:1, 600:2, 300:3 };
-  return (rank[a.width] ?? 9) - (rank[b.width] ?? 9);
-});
-let r11b = calculate({
-  project: { thickness: 0, bothFaces: 0, closed: true, pipeRows: 0, edges: edges([3600,3600,3600,3600]) },
-  inventory: invPri,
-});
+assert('400優先: 400×2', e11a.pieces.filter(p=>p.label==='400').length === 2 && e11a.pieces.filter(p=>p.kind==='straight').length === 2, JSON.stringify(e11a.pieces.map(p=>p.label)));
+let r11b = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([800,800,800,800])}, inventory: invTie([500,400,300]) });
 let e11b = r11b.edgeResults[0];
-let c900 = e11b.pieces.filter(p=>p.label==='900').length;
-assert('900優先: 900を3枚使う', c900 === 3, JSON.stringify(e11b.pieces.map(p=>p.label)));
-assert('900優先: 1800は使わない', e11b.pieces.filter(p=>p.label==='1800').length === 0, JSON.stringify(e11b.pieces.map(p=>p.label)));
-// usage表も優先順位の並びで返る
-assert('usage先頭が900', r11b.usage[0].width === 900, r11b.usage[0].width);
+assert('500優先: 500+300（2枚）', e11b.pieces.filter(p=>p.label==='500').length === 1 && e11b.pieces.filter(p=>p.label==='300').length === 1, JSON.stringify(e11b.pieces.map(p=>p.label)));
 
 // ---- 12) 割り切りを優先（グリーディなら端数が出るケースで exact を見つける） ----
 console.log('Test 12: prefer exact division over greedy leftover');
@@ -231,10 +218,11 @@ console.log('Test 14: minimal leftover when not divisible');
 // packPanels 単体: 幅[1000,700], R=1250 → 1000(端数250) より 700+... 700+? 550無 → max reachable=1000 leftover250?
 //   実際 reachable: 700,1000,1400,1700,2000... 1250以下の最大 reachable=1000 → leftover250。
 let reach14 = bestReachable(3000, [1000,700]);
-let pk14 = packPanels(1250, [1000,700], reach14);
+let mc14 = minCounts(3000, [1000,700]);
+let pk14 = packPanels(1250, [1000,700], reach14, mc14);
 assert('packPanels: 端数250', pk14.leftover === 250, pk14.leftover);
 // R=1400 は 700+700 でちょうど
-let pk14b = packPanels(1400, [1000,700], reach14);
+let pk14b = packPanels(1400, [1000,700], reach14, mc14);
 assert('packPanels: 1400は割り切り(端数0)', pk14b.leftover === 0, pk14b.leftover);
 assert('packPanels: 700を2枚', pk14b.counts[700] === 2, JSON.stringify(pk14b.counts));
 
@@ -285,5 +273,45 @@ let r17 = calculate({
 });
 let cu17 = r17.usage.find(u => u.type === 'corner');
 assert('旧leg: 出隅 need=4 / legA=150', cu17.need === 4 && cu17.legA === 150 && cu17.legB === 150, JSON.stringify(cu17));
+
+// ---- 18) 枚数最小（割り切れる中で最少枚数）。優先順位より枚数を優先 ----
+console.log('Test 18: fewest panels wins over priority');
+// 900を優先1に置いても、1800×1（1枚）の方が 900×2（2枚）より少ないので1800を使う。
+let invFew = [
+  { type: 'straight', width: 900,  qty: 50 },
+  { type: 'straight', width: 1800, qty: 50 },
+  { type: 'corner', legA: 0, legB: 0, qty: 9 },
+  { type: 'cornerIn', legA: 0, legB: 0, qty: 9 },
+];
+let rFew = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([1800,1800,1800,1800])}, inventory: invFew });
+let eFew = rFew.edgeResults[0];
+assert('枚数最小: 1800×1', eFew.pieces.filter(p=>p.label==='1800').length === 1, JSON.stringify(eFew.pieces.map(p=>p.label)));
+assert('枚数最小: 900は使わない', eFew.pieces.filter(p=>p.label==='900').length === 0, JSON.stringify(eFew.pieces.map(p=>p.label)));
+assert('枚数最小: パネルは合計1枚', eFew.pieces.filter(p=>p.kind==='straight').length === 1, JSON.stringify(eFew.pieces.map(p=>p.label)));
+
+// ---- 19) 型枠の高さで在庫を絞り込む ----
+console.log('Test 19: filter panels by form height per site');
+let invH = [
+  { type: 'straight', width: 900,  height: 600, qty: 50 },
+  { type: 'straight', width: 1800, height: 300, qty: 50 }, // 高さ違い → 高さ600では使わない
+  { type: 'corner', legA: 0, legB: 0, height: 600, qty: 9 },
+  { type: 'cornerIn', legA: 0, legB: 0, height: 600, qty: 9 },
+];
+// 高さ600指定: 900(H600)のみ使える → 1800(H300)は無視、900×2になる
+let rH600 = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,formHeight:600,edges:edges([1800,1800,1800,1800])}, inventory: invH });
+let eH600 = rH600.edgeResults[0];
+assert('高さ600: 900×2', eH600.pieces.filter(p=>p.label==='900').length === 2, JSON.stringify(eH600.pieces.map(p=>p.label)));
+assert('高さ600: 1800(高さ違い)は使わない', eH600.pieces.filter(p=>p.label==='1800').length === 0, JSON.stringify(eH600.pieces.map(p=>p.label)));
+assert('高さ600: usageに高さ600', rH600.usage.some(u=>u.type==='straight' && u.height===600), JSON.stringify(rH600.usage.filter(u=>u.type==='straight')));
+// 高さ300指定: 1800(H300)のみ使える → 1800×1
+let rH300 = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,formHeight:300,edges:edges([1800,1800,1800,1800])}, inventory: invH });
+assert('高さ300: 1800×1', rH300.edgeResults[0].pieces.filter(p=>p.label==='1800').length === 1, JSON.stringify(rH300.edgeResults[0].pieces.map(p=>p.label)));
+// 高さ900指定: 該当パネルなし → エラー
+let rH900 = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,formHeight:900,edges:edges([1800,1800,1800,1800])}, inventory: invH });
+assert('高さ900: 該当なしエラー', !!rH900.error && rH900.error.indexOf('900') >= 0, rH900.error);
+// 高さ未指定(0)のパネルは、高さ指定があっても汎用として使える
+let invUniversal = [ { type:'straight', width:900, qty:50 }, { type:'corner', legA:0, legB:0, qty:9 }, { type:'cornerIn', legA:0, legB:0, qty:9 } ];
+let rUni = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,formHeight:600,edges:edges([1800,1800,1800,1800])}, inventory: invUniversal });
+assert('高さ未指定パネルは汎用', !rUni.error && rUni.edgeResults[0].pieces.filter(p=>p.label==='900').length === 2, rUni.error || JSON.stringify(rUni.edgeResults[0].pieces.map(p=>p.label)));
 
 console.log('\n==== RESULT: ' + pass + ' passed, ' + fail + ' failed ====');
