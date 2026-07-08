@@ -1,5 +1,5 @@
 /* 基礎型枠 PWA  Service Worker — オフライン対応 */
-const CACHE = "kiso-formwork-v9";
+const CACHE = "kiso-formwork-v10";
 const ASSETS = [
   "./",
   "./index.html",

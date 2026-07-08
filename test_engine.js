@@ -166,20 +166,33 @@ assert('入隅未登録の注意あり', r10.unresolved.some(u => u.indexOf('入
 let ci10 = r10.usage.find(u => u.type === 'cornerIn');
 assert('入隅は不足4', ci10.need === 4 && ci10.short === 4, JSON.stringify(ci10));
 
-// ---- 11) 優先順位は「同じ枚数のとき」のタイブレークとして効く ----
-console.log('Test 11: priority breaks ties among equal-count solutions');
-// 幅 400/500/300、角なし(leg0)、辺800 → remaining800。
-// 800を2枚で作る方法: {400,400} と {500,300}（どちらも2枚）。優先順位で決まる。
-function invTie(order) {
-  const s = { 400:{type:'straight',width:400,qty:50}, 500:{type:'straight',width:500,qty:50}, 300:{type:'straight',width:300,qty:50} };
+// ---- 11) 種類最小が優先順位より優先（枚数は同じ） ----
+console.log('Test 11: fewer distinct types beats priority (same count)');
+// 幅 700/500/300/200。1000を2枚で作る方法: {500,500}(1種類) と {700,300}(2種類)。
+// どちらも2枚だが 500×2（1種類）を選ぶ。優先順位に関係なく。
+function inv1000(order) {
+  const s = { 700:{type:'straight',width:700,qty:50}, 500:{type:'straight',width:500,qty:50}, 300:{type:'straight',width:300,qty:50}, 200:{type:'straight',width:200,qty:50} };
   return order.map(w => s[w]).concat([{type:'corner',legA:0,legB:0,qty:9},{type:'cornerIn',legA:0,legB:0,qty:9}]);
 }
-let r11a = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([800,800,800,800])}, inventory: invTie([400,500,300]) });
-let e11a = r11a.edgeResults[0];
-assert('400優先: 400×2', e11a.pieces.filter(p=>p.label==='400').length === 2 && e11a.pieces.filter(p=>p.kind==='straight').length === 2, JSON.stringify(e11a.pieces.map(p=>p.label)));
-let r11b = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([800,800,800,800])}, inventory: invTie([500,400,300]) });
-let e11b = r11b.edgeResults[0];
-assert('500優先: 500+300（2枚）', e11b.pieces.filter(p=>p.label==='500').length === 1 && e11b.pieces.filter(p=>p.label==='300').length === 1, JSON.stringify(e11b.pieces.map(p=>p.label)));
+// 700を最優先にしても、種類の少ない 500×2 を選ぶ
+let r11 = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([1000,1000,1000,1000])}, inventory: inv1000([700,500,300,200]) });
+let e11 = r11.edgeResults[0];
+assert('種類最小: 500×2（1種類2枚）', e11.pieces.filter(p=>p.label==='500').length === 2 && e11.pieces.filter(p=>p.kind==='straight').length === 2, JSON.stringify(e11.pieces.map(p=>p.label)));
+assert('種類最小: 700+300は選ばない', e11.pieces.filter(p=>p.label==='700').length === 0, JSON.stringify(e11.pieces.map(p=>p.label)));
+
+// ---- 11b) 種類数が同じなら優先順位で決める ----
+console.log('Test 11b: priority breaks ties among equal type-count solutions');
+// 幅 700/300/600/400。1000を2枚2種類で作る: {700,300} と {600,400}。優先順位で決まる。
+function invPair(order) {
+  const s = { 700:{type:'straight',width:700,qty:50}, 300:{type:'straight',width:300,qty:50}, 600:{type:'straight',width:600,qty:50}, 400:{type:'straight',width:400,qty:50} };
+  return order.map(w => s[w]).concat([{type:'corner',legA:0,legB:0,qty:9},{type:'cornerIn',legA:0,legB:0,qty:9}]);
+}
+let r11p1 = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([1000,1000,1000,1000])}, inventory: invPair([700,300,600,400]) });
+let lab1 = r11p1.edgeResults[0].pieces.filter(p=>p.kind==='straight').map(p=>+p.label).sort((a,b)=>a-b);
+assert('700/300優先: {300,700}', JSON.stringify(lab1) === JSON.stringify([300,700]), JSON.stringify(lab1));
+let r11p2 = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([1000,1000,1000,1000])}, inventory: invPair([600,400,700,300]) });
+let lab2 = r11p2.edgeResults[0].pieces.filter(p=>p.kind==='straight').map(p=>+p.label).sort((a,b)=>a-b);
+assert('600/400優先: {400,600}', JSON.stringify(lab2) === JSON.stringify([400,600]), JSON.stringify(lab2));
 
 // ---- 12) 割り切りを優先（グリーディなら端数が出るケースで exact を見つける） ----
 console.log('Test 12: prefer exact division over greedy leftover');
@@ -288,6 +301,21 @@ let eFew = rFew.edgeResults[0];
 assert('枚数最小: 1800×1', eFew.pieces.filter(p=>p.label==='1800').length === 1, JSON.stringify(eFew.pieces.map(p=>p.label)));
 assert('枚数最小: 900は使わない', eFew.pieces.filter(p=>p.label==='900').length === 0, JSON.stringify(eFew.pieces.map(p=>p.label)));
 assert('枚数最小: パネルは合計1枚', eFew.pieces.filter(p=>p.kind==='straight').length === 1, JSON.stringify(eFew.pieces.map(p=>p.label)));
+
+// ---- 18b) 枚数が同じなら種類を減らす（枚数は増やさない） ----
+console.log('Test 18b: minimize distinct types without increasing count');
+// 幅 900/600。3600 → 900×4（4枚1種類）と 900×2+600×3(5枚) など。最小枚数は4(900×4)。
+// さらに 600×6 は6枚で種類1だが枚数が増えるので選ばない（枚数優先）。
+let inv18 = [
+  { type:'straight', width:900, qty:50 },
+  { type:'straight', width:600, qty:50 },
+  { type:'corner', legA:0, legB:0, qty:9 },
+  { type:'cornerIn', legA:0, legB:0, qty:9 },
+];
+let r18b = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([3600,3600,3600,3600])}, inventory: inv18 });
+let e18b = r18b.edgeResults[0];
+assert('種類/枚数最小: 900×4', e18b.pieces.filter(p=>p.label==='900').length === 4, JSON.stringify(e18b.pieces.map(p=>p.label)));
+assert('種類/枚数最小: 600は使わない', e18b.pieces.filter(p=>p.label==='600').length === 0, JSON.stringify(e18b.pieces.map(p=>p.label)));
 
 // ---- 19) 型枠の高さで在庫を絞り込む ----
 console.log('Test 19: filter panels by form height per site');

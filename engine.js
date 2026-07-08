@@ -67,9 +67,11 @@ function minCounts(maxLen, widths) {
   return mc; // mc[0] = 0
 }
 
-/* 残り長さ R を、①割り切り優先（端数最小）→②枚数最小→③優先順位の順で埋める。
+/* 残り長さ R を、①割り切り優先→②枚数最小→③種類最小→④優先順位 の順で埋める。
    ① R 以下でパネルだけで作れる最大長 target を求める（端数 = R - target を最小化）。
-   ② target を最小枚数で分解（minCnt）。同じ枚数なら priorityWidths の並びを優先。
+   ② target を最小枚数 C（minCnt）で分解する。
+   ③ 枚数 C を保ったまま、使うサイズの種類を最小化（1種類→2種類→…）。
+   ④ 同じ種類数なら priorityWidths の並び（使いたい順）を優先。
    端数（R - target）はスライド枠/板で仕上げるため leftover として返す。 */
 function packPanels(R, priorityWidths, reach, minCnt) {
   R = Math.round(R);
@@ -77,26 +79,55 @@ function packPanels(R, priorityWidths, reach, minCnt) {
 
   let target = Math.min(R, reach.length - 1);
   while (target > 0 && !reach[target]) target--;
+  const leftover = R - target;
+  if (target === 0) return { counts: {}, seq: [], leftover };
 
-  const counts = {};
-  const seq = [];
-  let remaining = target, guard = 0;
+  const C = minCnt[target];
+  const has = w => priorityWidths.indexOf(w) >= 0;
+
+  // ① 1種類：C 枚ちょうどで割り切れるか（w × C = target）
+  if (C > 0 && target % C === 0 && has(target / C)) {
+    const w = target / C;
+    return { counts: { [w]: C }, seq: new Array(C).fill(w), leftover };
+  }
+
+  // ② 2種類：x1 + x2 = C, x1·w1 + x2·w2 = target（両方 1 枚以上）
+  //    優先順位の高い幅を使う組を選ぶ（index の和が小さい→最小 index が小さい）
+  let bestPair = null;
+  for (let i = 0; i < priorityWidths.length; i++) {
+    for (let j = i + 1; j < priorityWidths.length; j++) {
+      const w1 = priorityWidths[i], w2 = priorityWidths[j];
+      const numer = target - C * w2, denom = w1 - w2;
+      if (denom === 0 || numer % denom !== 0) continue;
+      const x1 = numer / denom, x2 = C - x1;
+      if (x1 <= 0 || x2 <= 0) continue;
+      const s0 = i + j, s1 = i; // i<j なので i が最小 index
+      if (!bestPair || s0 < bestPair.s0 || (s0 === bestPair.s0 && s1 < bestPair.s1)) {
+        bestPair = { w1, w2, x1, x2, s0, s1 };
+      }
+    }
+  }
+  if (bestPair) {
+    const seq = [];
+    for (let k = 0; k < bestPair.x1; k++) seq.push(bestPair.w1); // 優先度の高い方(w1)を先に
+    for (let k = 0; k < bestPair.x2; k++) seq.push(bestPair.w2);
+    return { counts: { [bestPair.w1]: bestPair.x1, [bestPair.w2]: bestPair.x2 }, seq, leftover };
+  }
+
+  // ③ フォールバック：3種類以上が要る稀なケースは、最小枚数を保ちつつ優先順位で分解
+  const counts = {}, seq = [];
+  let remaining = target, extra = 0, guard = 0;
   while (remaining > 0 && guard++ < 100000) {
-    // 最小枚数の経路を保ちつつ、優先順位の高い幅を選ぶ
     let picked = -1;
     for (let k = 0; k < priorityWidths.length; k++) {
       const w = priorityWidths[k];
       if (w > 0 && w <= remaining && reach[remaining - w] && minCnt[remaining - w] === minCnt[remaining] - 1) { picked = w; break; }
     }
-    if (picked < 0) break; // 到達不能（保険）
-    counts[picked] = (counts[picked] || 0) + 1;
-    seq.push(picked);
-    remaining -= picked;
+    if (picked < 0) break;
+    counts[picked] = (counts[picked] || 0) + 1; seq.push(picked); remaining -= picked;
   }
-
-  let leftover = R - target;
-  if (remaining > 0) leftover += remaining; // 念のための保険（通常 remaining は 0）
-  return { counts, seq, leftover };
+  if (remaining > 0) extra = remaining;
+  return { counts, seq, leftover: leftover + extra };
 }
 
 /* コーナー枠の脚寸法。旧データ {leg} は A=B、新データは {legA, legB}。 */
