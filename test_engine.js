@@ -342,4 +342,24 @@ let invUniversal = [ { type:'straight', width:900, qty:50 }, { type:'corner', le
 let rUni = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,formHeight:600,edges:edges([1800,1800,1800,1800])}, inventory: invUniversal });
 assert('高さ未指定パネルは汎用', !rUni.error && rUni.edgeResults[0].pieces.filter(p=>p.label==='900').length === 2, rUni.error || JSON.stringify(rUni.edgeResults[0].pieces.map(p=>p.label)));
 
+// ---- 20) コーナー選択: 端数が同じ(0)なら枚数が少なくなる方を選ぶ ----
+console.log('Test 20: corner choice prefers fewer panels when leftover ties');
+// 辺7474。150コーナー→7174(160等を含み8枚)、235コーナー→7004=900+1027×2+1800×2+450(6枚)。
+// どちらも端数0だが、枚数の少ない235を選ぶ。
+let inv20 = [
+  {type:'straight',width:1800,qty:99},{type:'straight',width:1027,qty:99},
+  {type:'straight',width:900,qty:99},{type:'straight',width:450,qty:99},
+  {type:'straight',width:300,qty:99},{type:'straight',width:160,qty:99},
+  {type:'corner',legA:150,legB:150,qty:99},{type:'corner',legA:235,legB:235,qty:99},
+  {type:'cornerIn',legA:150,legB:150,qty:99},{type:'cornerIn',legA:235,legB:235,qty:99},
+];
+let r20 = calculate({ project:{thickness:0,bothFaces:0,closed:true,pipeRows:0,edges:edges([7474,7474,7474,7474])}, inventory: inv20 });
+let e20 = r20.edgeResults[0];
+let corner20 = e20.pieces.find(p=>p.kind==='corner').label;
+let panels20 = e20.pieces.filter(p=>p.kind==='straight').map(p=>+p.label).sort((a,b)=>a-b);
+assert('コーナーは235を選ぶ', corner20.indexOf('235') >= 0, corner20);
+assert('7474は6枚で割り切る', panels20.length === 6, JSON.stringify(panels20));
+assert('160(小さい端材)を使わない', !panels20.includes(160), JSON.stringify(panels20));
+assert('450を使う(きれいに割り切り)', panels20.includes(450), JSON.stringify(panels20));
+
 console.log('\n==== RESULT: ' + pass + ' passed, ' + fail + ' failed ====');

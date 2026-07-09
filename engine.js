@@ -141,25 +141,29 @@ function legsOfItem(i) {
    選択肢 = 所有バリエーション × 向き（脚A/Bが違う枠は回転できる）。
    辺ごとの端数（パネルで割り切れない余り）の合計が最小になる組合せを探す。
    組合せが少なければ全探索、多ければ1角ずつの局所改善で近似する。 */
-function chooseCorners(faceLens, cornerOptions, closed, best, tol) {
+function chooseCorners(faceLens, cornerOptions, closed, best, minCnt, tol) {
   const M = cornerOptions.length;
   if (!M) return [];
   const N = faceLens.length;
   const maxIdx = best.length - 1;
 
+  // コスト = 端数(最優先) → パネル枚数(同点のとき少ない方) の複合スコア。
+  // 端数ゼロで割り切れるコーナーが複数あるとき、枚数が少なくきれいに入る組を選ぶ。
   function cost(idx) {
-    let sum = 0;
+    let leftoverSum = 0, cntSum = 0;
     for (let i = 0; i < N; i++) {
       const endC = i < M ? i : -1;
       const startC = i > 0 ? i - 1 : (closed ? M - 1 : -1);
       let R = faceLens[i];
       if (endC >= 0) R -= cornerOptions[endC][idx[endC]].toPrev;
       if (startC >= 0) R -= cornerOptions[startC][idx[startC]].toNext;
-      if (R < -tol) { sum += 1e9; continue; }
+      if (R < -tol) { leftoverSum += 1e6; continue; } // コーナーに足りない=大ペナルティ
       const r = Math.max(0, Math.round(R));
-      sum += r - best[Math.min(r, maxIdx)];
+      const t = best[Math.min(r, maxIdx)];
+      leftoverSum += r - t;
+      cntSum += minCnt[Math.min(t, maxIdx)] || 0;
     }
-    return sum;
+    return leftoverSum * 1e6 + cntSum;
   }
 
   let total = 1;
@@ -308,7 +312,7 @@ function calculate(state) {
       cornerOptions.push(opts);
     }
     // なるべく割り切れるように、各角の枠と向きを決める
-    const choice = chooseCorners(faceLens, cornerOptions, p.closed, best, TOLERANCE);
+    const choice = chooseCorners(faceLens, cornerOptions, p.closed, best, minCnt, TOLERANCE);
 
     edges.forEach((edge, ei) => {
       const endC   = ei < cornerCount ? ei : -1;
